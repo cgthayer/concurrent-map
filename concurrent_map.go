@@ -6,6 +6,13 @@ import (
 	"sync"
 )
 
+//todo
+//  shard count configurable
+//  count accesses, provide a way to check balance
+//  offer non-blocking lock access
+//  measure lock misses
+//  provide way to split hot shards by N pieces
+
 var SHARD_COUNT = 32
 
 type Stringer interface {
@@ -57,6 +64,7 @@ func (m ConcurrentMap[K, V]) GetShard(key K) *ConcurrentMapShared[K, V] {
 	return m.shards[uint(m.sharding(key))%uint(SHARD_COUNT)]
 }
 
+// todo perf, only lock if not held, maybe even release every 1000 writes for readers to progress (shard.rwmu.readerCount > 0)
 func (m ConcurrentMap[K, V]) MSet(data map[K]V) {
 	for key, value := range data {
 		shard := m.GetShard(key)
@@ -116,6 +124,7 @@ func (m ConcurrentMap[K, V]) Get(key K) (V, bool) {
 	return val, ok
 }
 
+// todo: perf make these go routines in parallel
 // Count returns the number of elements within the map.
 func (m ConcurrentMap[K, V]) Count() int {
 	count := 0
@@ -179,6 +188,7 @@ func (m ConcurrentMap[K, V]) Pop(key K) (v V, exists bool) {
 	return v, exists
 }
 
+// todo perf: return immediately if any have any keys, instead of going through and counting all
 // IsEmpty checks if map is empty.
 func (m ConcurrentMap[K, V]) IsEmpty() bool {
 	return m.Count() == 0
@@ -219,6 +229,8 @@ func (m ConcurrentMap[K, V]) Clear() {
 	}
 }
 
+//todo perf: just use a callback without channels at all, seems expensive
+
 // Returns a array of channels that contains elements in each shard,
 // which likely takes a snapshot of `m`.
 // It returns once the size of each buffered channel is determined,
@@ -248,6 +260,8 @@ func snapshot[K comparable, V any](m ConcurrentMap[K, V]) (chans []chan Tuple[K,
 	wg.Wait()
 	return chans
 }
+
+//todo perf: does this need go routines?
 
 // fanIn reads elements from channels `chans` into channel `out`
 func fanIn[K comparable, V any](chans []chan Tuple[K, V], out chan Tuple[K, V]) {
@@ -338,19 +352,23 @@ func (m ConcurrentMap[K, V]) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(tmp)
 }
-func strfnv32[K fmt.Stringer](key K) uint32 {
-	return fnv32(key.String())
-}
 
+//todo understand this is a string of unicode -> uint32 for an xor. does that provide proper entropy in all bits?
+
+// Hash function, can be overridden
 func fnv32(key string) uint32 {
 	hash := uint32(2166136261)
 	const prime32 = uint32(16777619)
 	keyLength := len(key)
 	for i := 0; i < keyLength; i++ {
 		hash *= prime32
-		hash ^= uint32(key[i])
+		hash ^= uint32(key[i]) // uh oh?
 	}
 	return hash
+}
+
+func strfnv32[K fmt.Stringer](key K) uint32 {
+	return fnv32(key.String())
 }
 
 // Reverse process of Marshal.
