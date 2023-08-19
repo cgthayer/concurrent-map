@@ -13,7 +13,7 @@ import (
 //  measure lock misses
 //  provide way to split hot shards by N pieces
 
-var SHARD_COUNT = 32
+var SHARD_COUNT_DEFAULT uint = 32
 
 type Stringer interface {
 	fmt.Stringer
@@ -23,8 +23,9 @@ type Stringer interface {
 // A "thread" safe map of type string:Anything.
 // To avoid lock bottlenecks this map is dived to several (SHARD_COUNT) map shards.
 type ConcurrentMap[K comparable, V any] struct {
-	shards   []*ConcurrentMapShared[K, V]
-	sharding func(key K) uint32
+	shards      []*ConcurrentMapShared[K, V]
+	sharding    func(key K) uint
+	shard_count uint
 }
 
 // A "thread" safe string to anything map.
@@ -33,12 +34,16 @@ type ConcurrentMapShared[K comparable, V any] struct {
 	sync.RWMutex // Read Write mutex, guards access to internal map.
 }
 
-func create[K comparable, V any](sharding func(key K) uint32) ConcurrentMap[K, V] {
+func create[K comparable, V any](sharding func(key K) uint, shard_count uint) ConcurrentMap[K, V] {
+	if shard_count < 1 {
+		shard_count = 1
+	}
+	m.shard_count = shard_count
 	m := ConcurrentMap[K, V]{
 		sharding: sharding,
-		shards:   make([]*ConcurrentMapShared[K, V], SHARD_COUNT),
+		shards:   make([]*ConcurrentMapShared[K, V], shard_count),
 	}
-	for i := 0; i < SHARD_COUNT; i++ {
+	for i := 0; i < shard_count; i++ {
 		m.shards[i] = &ConcurrentMapShared[K, V]{items: make(map[K]V)}
 	}
 	return m
@@ -46,7 +51,7 @@ func create[K comparable, V any](sharding func(key K) uint32) ConcurrentMap[K, V
 
 // Creates a new concurrent map.
 func New[V any]() ConcurrentMap[string, V] {
-	return create[string, V](fnv32)
+	return create[string, V](fnv32, SHARD_COUNT_DEFAULT)
 }
 
 // Creates a new concurrent map.
@@ -55,8 +60,8 @@ func NewStringer[K Stringer, V any]() ConcurrentMap[K, V] {
 }
 
 // Creates a new concurrent map.
-func NewWithCustomShardingFunction[K comparable, V any](sharding func(key K) uint32) ConcurrentMap[K, V] {
-	return create[K, V](sharding)
+func NewWithCustomShardingFunction[K comparable, V any](sharding func(key K) uint) ConcurrentMap[K, V] {
+	return create[K, V](sharding, SHARD_COUNT_DEFAULT)
 }
 
 // GetShard returns shard under given key
